@@ -41,7 +41,7 @@ module Mail # :doc:
     require 'mail/multibyte'
   end
 
-  require 'mail/patterns'
+  require 'mail/constants'
   require 'mail/utilities'
   require 'mail/configuration'
 
@@ -76,7 +76,7 @@ module Mail # :doc:
 
   require 'mail/envelope'
 
-  require 'load_parsers'
+  require 'mail/parsers'
 
   # Autoload header field elements and transfer encodings.
   require 'mail/elements'

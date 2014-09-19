@@ -1,7 +1,7 @@
 # encoding: utf-8
 module Mail
   class Address
-    
+
     include Mail::Utilities
     
     # Mail::Address handles all email addresses in Mail.  It takes an email address string
@@ -22,21 +22,18 @@ module Mail
     #  a.to_s         #=> 'Mikel Lindsaar <mikel@test.lindsaar.net> (My email address)'
     def initialize(value = nil)
       @output_type = :decode
-      @tree = nil
-      @raw_text = value
-      case
-      when value.nil?
+      if value.nil?
         @parsed = false
-        return
+        @data = nil
       else
         parse(value)
       end
     end
     
-    # Returns the raw imput of the passed in string, this is before it is passed
+    # Returns the raw input of the passed in string, this is before it is passed
     # by the parser.
     def raw
-      @raw_text
+      @data.raw
     end
 
     # Returns a correctly formatted address for the email going out.  If given
@@ -48,15 +45,14 @@ module Mail
     #  a.format #=> 'Mikel Lindsaar <mikel@test.lindsaar.net> (My email address)'
     def format
       parse unless @parsed
-      case
-      when tree.nil?
-        ''
-      when display_name
-        [quote_phrase(display_name), "<#{address}>", format_comments].compact.join(" ")
-      when address
-        [address, format_comments].compact.join(" ")
+      if @data.nil?
+        EMPTY
+      elsif display_name
+        [quote_phrase(display_name), "<#{address}>", format_comments].compact.join(SPACE)
+      elsif address
+        [address, format_comments].compact.join(SPACE)
       else
-        tree.text_value
+        raw
       end
     end
 
@@ -106,7 +102,7 @@ module Mail
     #  a.local #=> 'mikel'
     def local
       parse unless @parsed
-      "#{obs_domain_list}#{get_local.strip}" if get_local
+      "#{@data.obs_domain_list}#{get_local.strip}" if get_local
     end
 
     # Returns the domain part (the right hand side of the @ sign in the email address) of
@@ -126,11 +122,7 @@ module Mail
     #  a.comments #=> ['My email address']
     def comments
       parse unless @parsed
-      if get_comments.empty?
-        nil
-      else
-        get_comments.map { |c| c.squeeze(" ") }
-      end
+      get_comments.map { |c| c.squeeze(SPACE) } unless get_comments.empty?
     end
     
     # Sometimes an address will not have a display name, but might have the name
@@ -170,37 +162,31 @@ module Mail
       format
     end
 
+    def group
+      @data && @data.group
+    end
+
     private
     
     def parse(value = nil)
       @parsed = true
-      case
-      when value.nil?
-        nil
-      when value.class == String
-        self.tree = Mail::AddressList.new(value).address_nodes.first
-      else
-        self.tree = value
-      end
-    end
-    
-    
-    def get_domain
-      if tree.respond_to?(:angle_addr) && tree.angle_addr.respond_to?(:addr_spec) && tree.angle_addr.addr_spec.respond_to?(:domain)
-        @domain_text ||= tree.angle_addr.addr_spec.domain.text_value.strip
-      elsif tree.respond_to?(:domain)
-        @domain_text ||= tree.domain.text_value.strip
-      elsif tree.respond_to?(:addr_spec) && tree.addr_spec.respond_to?(:domain)
-        tree.addr_spec.domain.text_value.strip
-      else
-        nil
-      end
-    end
+      @data = nil
 
+      case value
+      when Mail::Parsers::AddressStruct
+        @data = value
+      when String
+        unless value.blank?
+          address_list = Mail::Parsers::AddressListsParser.new.parse(value)
+          @data = address_list.addresses.first
+        end
+      end
+    end
+    
     def strip_all_comments(string)
       unless comments.blank?
         comments.each do |comment|
-          string = string.gsub("(#{comment})", '')
+          string = string.gsub("(#{comment})", EMPTY)
         end
       end
       string.strip
@@ -209,106 +195,53 @@ module Mail
     def strip_domain_comments(value)
       unless comments.blank?
         comments.each do |comment|
-          if get_domain && get_domain.include?("(#{comment})")
-            value = value.gsub("(#{comment})", '')
+          if @data.domain && @data.domain.include?("(#{comment})")
+            value = value.gsub("(#{comment})", EMPTY)
           end
         end
       end
       value.to_s.strip
     end
     
-    def get_comments
-      if tree.respond_to?(:comments)
-        @comments = tree.comments.map { |c| unparen(c.text_value.to_str) } 
-      else
-        @comments = []
-      end
-    end
-    
     def get_display_name
-      if tree.respond_to?(:display_name)
-        name = unquote(tree.display_name.text_value.strip)
-        str = strip_all_comments(name.to_s)
-      elsif comments
-        if domain
-          str = strip_domain_comments(format_comments)
-        else
-          str = nil
-        end
-      else
-        nil
+      if @data.display_name
+        str = strip_all_comments(@data.display_name.to_s)
+      elsif @data.comments && @data.domain
+        str = strip_domain_comments(format_comments)
       end
-      
-      if str.blank?
-        nil
-      else
-        str
-      end
+
+      str unless str.blank?
     end
     
     def get_name
       if display_name
         str = display_name
-      else
-        if comments
-          comment_text = comments.join(' ').squeeze(" ")
-          str = "(#{comment_text})"
-        end
+      elsif comments
+        str = "(#{comments.join(SPACE).squeeze(SPACE)})"
       end
 
-      if str.blank?
-        nil
-      else
-        unparen(str)
-      end
-    end
-    
-    # Provides access to the Treetop parse tree for this address
-    def tree
-      @tree
-    end
-    
-    def tree=(value)
-      @tree = value
+      unparen(str) unless str.blank?
     end
     
     def format_comments
       if comments
-        comment_text = comments.map {|c| escape_paren(c) }.join(' ').squeeze(" ")
+        comment_text = comments.map {|c| escape_paren(c) }.join(SPACE).squeeze(SPACE)
         @format_comments ||= "(#{comment_text})"
       else
         nil
       end
     end
-   
-    def obs_domain_list
-      if tree.respond_to?(:angle_addr)
-        obs = tree.angle_addr.elements.select { |e| e.respond_to?(:obs_domain_list) }
-        !obs.empty? ? obs.first.text_value : nil
-      else
-        nil
-      end
-    end
-    
+
     def get_local
-      case
-      when tree.respond_to?(:local_dot_atom_text)
-        tree.local_dot_atom_text.text_value
-      when tree.respond_to?(:angle_addr) && tree.angle_addr.respond_to?(:addr_spec) && tree.angle_addr.addr_spec.respond_to?(:local_part)
-        tree.angle_addr.addr_spec.local_part.text_value
-      when tree.respond_to?(:addr_spec) && tree.addr_spec.respond_to?(:local_part)
-        tree.addr_spec.local_part.text_value
-      when tree.respond_to?(:angle_addr) && tree.angle_addr.respond_to?(:addr_spec) && tree.angle_addr.addr_spec.respond_to?(:local_dot_atom_text)
-        # Ignore local dot atom text when in angle brackets
-        nil
-      when tree.respond_to?(:addr_spec) && tree.addr_spec.respond_to?(:local_dot_atom_text)
-        # Ignore local dot atom text when in angle brackets
-        nil
-      else
-        tree && tree.respond_to?(:local_part) ? tree.local_part.text_value : nil
-      end
+      @data && @data.local
+    end
+
+    def get_domain
+      @data && @data.domain
     end
     
- 
+    def get_comments
+      @data && @data.comments
+    end
   end
 end
